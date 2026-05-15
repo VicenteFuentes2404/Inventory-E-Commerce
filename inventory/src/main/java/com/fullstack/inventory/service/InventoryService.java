@@ -1,23 +1,25 @@
 package com.fullstack.inventory.service;
 
+import com.fullstack.inventory.dto.ProductRequestDTO;
+import com.fullstack.inventory.dto.StockCheckResponseDTO;
+import com.fullstack.inventory.model.Product;
+
 import java.util.List;
 import java.util.UUID;
 
-import com.fullstack.inventory.dto.CreateProductRequest;
-import com.fullstack.inventory.event.OrderCreatedEvent;
-import com.fullstack.inventory.model.Product;
-
 public interface InventoryService {
-    
-    Product createProduct(CreateProductRequest request);
+
+    Product createProduct(ProductRequestDTO request);
 
     List<Product> getAllProducts();
 
-    Product getProductById(UUID id);
+    Product getProductById(UUID productId);
 
-    Product updateStock(UUID productId, Integer stock);
+    StockCheckResponseDTO checkStock(UUID productId, Integer quantity);
 
-    Product discountStockFromOrder(OrderCreatedEvent event);
+    Product discountStock(UUID productId, Integer quantity);
+
+    Product addStock(UUID productId, Integer quantity);
 
     List<Product> getLowStockProducts();
 }
