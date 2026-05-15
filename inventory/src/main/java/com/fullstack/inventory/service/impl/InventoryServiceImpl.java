@@ -1,37 +1,41 @@
 package com.fullstack.inventory.service.impl;
 
-import java.util.List;
-import java.util.UUID;
-import java.util.stream.Collectors;
-
+import com.fullstack.inventory.dto.ProductRequestDTO;
+import com.fullstack.inventory.dto.StockCheckResponseDTO;
+import com.fullstack.inventory.event.LowStockEvent;
+import com.fullstack.inventory.model.Product;
+import com.fullstack.inventory.model.StockMovement;
+import com.fullstack.inventory.repository.ProductRepository;
+import com.fullstack.inventory.repository.StockMovementRepository;
+import com.fullstack.inventory.service.InventoryService;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
-import com.fullstack.inventory.dto.CreateProductRequest;
-import com.fullstack.inventory.event.OrderCreatedEvent;
-import com.fullstack.inventory.model.Product;
-import com.fullstack.inventory.publisher.InventoryEventPublisher;
-import com.fullstack.inventory.repository.InventoryService;
-import com.fullstack.inventory.repository.ProductRepository;
-
+import java.util.List;
+import java.util.UUID;
+import java.util.stream.Collectors;
 
 @Service
 public class InventoryServiceImpl implements InventoryService {
 
     private final ProductRepository productRepository;
-    private final InventoryEventPublisher inventoryEventPublisher;
+    private final StockMovementRepository stockMovementRepository;
+    private final ApplicationEventPublisher eventPublisher;
 
     public InventoryServiceImpl(
             ProductRepository productRepository,
-            InventoryEventPublisher inventoryEventPublisher
+            StockMovementRepository stockMovementRepository,
+            ApplicationEventPublisher eventPublisher
     ) {
         this.productRepository = productRepository;
-        this.inventoryEventPublisher = inventoryEventPublisher;
+        this.stockMovementRepository = stockMovementRepository;
+        this.eventPublisher = eventPublisher;
     }
 
     @Override
-    public Product createProduct(CreateProductRequest request) {
+    public Product createProduct(ProductRequestDTO request) {
         productRepository.findBySku(request.getSku()).ifPresent(product -> {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
@@ -50,9 +54,14 @@ public class InventoryServiceImpl implements InventoryService {
 
         Product savedProduct = productRepository.save(product);
 
-        if (savedProduct.getStock() <= savedProduct.getMinimumStock()) {
-            inventoryEventPublisher.publishLowStock(savedProduct);
-        }
+        registerMovement(
+                savedProduct.getId(),
+                savedProduct.getStock(),
+                "INITIAL",
+                "Stock inicial del producto"
+        );
+
+        publishLowStockIfNeeded(savedProduct);
 
         return savedProduct;
     }
@@ -63,38 +72,38 @@ public class InventoryServiceImpl implements InventoryService {
     }
 
     @Override
-    public Product getProductById(UUID id) {
-        return productRepository.findById(id)
+    public Product getProductById(UUID productId) {
+        return productRepository.findById(productId)
                 .orElseThrow(() -> new ResponseStatusException(
                         HttpStatus.NOT_FOUND,
-                        "Producto no encontrado con ID: " + id
+                        "Producto no encontrado con ID: " + productId
                 ));
     }
 
     @Override
-    public Product updateStock(UUID productId, Integer stock) {
-        if (stock < 0) {
+    public StockCheckResponseDTO checkStock(UUID productId, Integer quantity) {
+        Product product = getProductById(productId);
+
+        boolean available = Boolean.TRUE.equals(product.getActive())
+                && product.getStock() >= quantity;
+
+        return new StockCheckResponseDTO(
+                available,
+                product.getStock(),
+                quantity
+        );
+    }
+
+    @Override
+    public Product discountStock(UUID productId, Integer quantity) {
+        if (quantity <= 0) {
             throw new ResponseStatusException(
                     HttpStatus.BAD_REQUEST,
-                    "El stock no puede ser negativo"
+                    "La cantidad debe ser mayor a 0"
             );
         }
 
         Product product = getProductById(productId);
-        product.setStock(stock);
-
-        Product updatedProduct = productRepository.save(product);
-
-        if (updatedProduct.getStock() <= updatedProduct.getMinimumStock()) {
-            inventoryEventPublisher.publishLowStock(updatedProduct);
-        }
-
-        return updatedProduct;
-    }
-
-    @Override
-    public Product discountStockFromOrder(OrderCreatedEvent event) {
-        Product product = getProductById(event.getProductId());
 
         if (!Boolean.TRUE.equals(product.getActive())) {
             throw new ResponseStatusException(
@@ -103,23 +112,49 @@ public class InventoryServiceImpl implements InventoryService {
             );
         }
 
-        if (product.getStock() < event.getQuantity()) {
+        if (product.getStock() < quantity) {
             throw new ResponseStatusException(
                     HttpStatus.CONFLICT,
                     "Stock insuficiente para el producto: " + product.getName()
             );
         }
 
-        product.setStock(product.getStock() - event.getQuantity());
+        product.setStock(product.getStock() - quantity);
 
         Product updatedProduct = productRepository.save(product);
 
-        System.out.println("INVENTORY: Stock descontado del producto " + updatedProduct.getName());
-        System.out.println("INVENTORY: Stock actual: " + updatedProduct.getStock());
+        registerMovement(
+                updatedProduct.getId(),
+                quantity,
+                "OUT",
+                "Descuento de stock por compra"
+        );
 
-        if (updatedProduct.getStock() <= updatedProduct.getMinimumStock()) {
-            inventoryEventPublisher.publishLowStock(updatedProduct);
+        publishLowStockIfNeeded(updatedProduct);
+
+        return updatedProduct;
+    }
+
+    @Override
+    public Product addStock(UUID productId, Integer quantity) {
+        if (quantity <= 0) {
+            throw new ResponseStatusException(
+                    HttpStatus.BAD_REQUEST,
+                    "La cantidad debe ser mayor a 0"
+            );
         }
+
+        Product product = getProductById(productId);
+        product.setStock(product.getStock() + quantity);
+
+        Product updatedProduct = productRepository.save(product);
+
+        registerMovement(
+                updatedProduct.getId(),
+                quantity,
+                "IN",
+                "Ingreso manual de stock"
+        );
 
         return updatedProduct;
     }
@@ -130,5 +165,30 @@ public class InventoryServiceImpl implements InventoryService {
                 .stream()
                 .filter(product -> product.getStock() <= product.getMinimumStock())
                 .collect(Collectors.toList());
+    }
+
+    private void registerMovement(UUID productId, Integer quantity, String type, String description) {
+        StockMovement movement = StockMovement.builder()
+                .productId(productId)
+                .quantity(quantity)
+                .type(type)
+                .description(description)
+                .build();
+
+        stockMovementRepository.save(movement);
+    }
+
+    private void publishLowStockIfNeeded(Product product) {
+        if (product.getStock() <= product.getMinimumStock()) {
+            LowStockEvent event = new LowStockEvent(
+                    product.getId(),
+                    product.getName(),
+                    product.getSku(),
+                    product.getStock(),
+                    product.getMinimumStock()
+            );
+
+            eventPublisher.publishEvent(event);
+        }
     }
 }

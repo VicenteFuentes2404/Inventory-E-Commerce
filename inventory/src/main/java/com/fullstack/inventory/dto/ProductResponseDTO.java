@@ -1,17 +1,16 @@
 package com.fullstack.inventory.dto;
 
+import com.fullstack.inventory.model.Product;
+import lombok.Builder;
+import lombok.Getter;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.UUID;
 
-import com.fullstack.inventory.model.Product;
-
-import lombok.Builder;
-import lombok.Getter;
-
 @Getter
 @Builder
-public class ProductResponse {
+public class ProductResponseDTO {
 
     private UUID id;
     private String name;
@@ -20,11 +19,12 @@ public class ProductResponse {
     private Integer minimumStock;
     private BigDecimal price;
     private Boolean active;
-    private LocalDateTime createdAt;
     private Boolean lowStock;
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
 
-    public static ProductResponse fromEntity(Product product) {
-        return ProductResponse.builder()
+    public static ProductResponseDTO fromEntity(Product product) {
+        return ProductResponseDTO.builder()
                 .id(product.getId())
                 .name(product.getName())
                 .sku(product.getSku())
@@ -32,8 +32,9 @@ public class ProductResponse {
                 .minimumStock(product.getMinimumStock())
                 .price(product.getPrice())
                 .active(product.getActive())
-                .createdAt(product.getCreatedAt())
                 .lowStock(product.getStock() <= product.getMinimumStock())
+                .createdAt(product.getCreatedAt())
+                .updatedAt(product.getUpdatedAt())
                 .build();
     }
 }

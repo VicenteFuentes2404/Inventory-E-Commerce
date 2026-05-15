@@ -1,9 +1,8 @@
 package com.fullstack.inventory.observer;
 
+import com.fullstack.inventory.event.LowStockEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.stereotype.Component;
-
-import com.fullstack.inventory.event.LowStockEvent;
 
 @Component
 public class LowStockObserver {
